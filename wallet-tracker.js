@@ -238,6 +238,21 @@ async function getAllTokenBalances(walletAddress) {
   return balances;
 }
 
+// 토큰 가격 조회 (단일 토큰용 - 호환성 유지)
+async function getTokenPrice(coingeckoId) {
+  try {
+    const response = await fetch(`${COINGECKO_API}/simple/price?ids=${coingeckoId}&vs_currencies=usd,krw`);
+    const data = await response.json();
+    return {
+      usd: data[coingeckoId]?.usd || 0,
+      krw: data[coingeckoId]?.krw || 0
+    };
+  } catch (error) {
+    console.error('토큰 가격 조회 실패:', error);
+    return { usd: 0, krw: 0 };
+  }
+}
+
 // 토큰 가격 조회 (여러 토큰 동시 조회)
 async function getMultipleTokenPrices(coingeckoIds) {
   try {
