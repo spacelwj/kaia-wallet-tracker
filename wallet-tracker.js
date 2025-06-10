@@ -12,21 +12,70 @@ const KAIA_RPC_ENDPOINTS = [
   'https://rpc.ankr.com/klaytn'
 ];
 const COINGECKO_API = 'https://api.coingecko.com/api/v3';
+const KLAYTNSCOPE_API = 'https://scope.klaytn.com/api/v2';
 
-// 토큰 정보 매핑
-const TOKEN_INFO = {
-  KAIA: {
+// 인기 카이아 체인 토큰들 (자동 검색용)
+const POPULAR_KAIA_TOKENS = [
+  {
+    symbol: 'KAIA',
+    name: 'Kaia',
+    address: 'native', // 네이티브 토큰
     coingecko_id: 'kaia',
-    decimals: 18,
-    symbol: 'KAIA'
+    decimals: 18
+  },
+  {
+    symbol: 'oUSDT',
+    name: 'Orbit Bridge Klaytn USD Tether',
+    address: '0xcee8faf64bb97a73bb51e115aa89c17ffa8dd167',
+    coingecko_id: 'tether',
+    decimals: 6
+  },
+  {
+    symbol: 'oUSDC',
+    name: 'Orbit Bridge Klaytn USD Coin',
+    address: '0x754288077d0ff82af7a5317c7cb8c444d421d103',
+    coingecko_id: 'usd-coin',
+    decimals: 6
+  },
+  {
+    symbol: 'WKLAY',
+    name: 'Wrapped KLAY',
+    address: '0x5819b6af194a78511c79c85ea68d2377a7e9335f',
+    coingecko_id: 'wrapped-klay',
+    decimals: 18
+  },
+  {
+    symbol: 'KSP',
+    name: 'KLAYswap Protocol',
+    address: '0xc6a2ad8cc6d4a3e08b56e33d68b7f1c3618f40d3',
+    coingecko_id: 'klayswap-protocol',
+    decimals: 18
+  },
+  {
+    symbol: 'SSX',
+    name: 'SOMESING',
+    address: '0x48c811855d7c8f33baab9eaf3f04baaf5c7a1b7e',
+    coingecko_id: 'somesing',
+    decimals: 18
   }
-};
+];
 
-// 카이아 체인 잔액 조회 (최신 RPC 엔드포인트 사용)
+// ERC-20 토큰 ABI (balanceOf 함수만)
+const ERC20_ABI = [
+  {
+    "constant": true,
+    "inputs": [{"name": "_owner", "type": "address"}],
+    "name": "balanceOf",
+    "outputs": [{"name": "balance", "type": "uint256"}],
+    "type": "function"
+  }
+];
+
+// 네이티브 KAIA 잔액 조회
 async function getKaiaBalance(address) {
   for (const endpoint of KAIA_RPC_ENDPOINTS) {
     try {
-      console.log(`💰 카이아 잔액 조회 중... (${endpoint})`);
+      console.log(`💰 KAIA 잔액 조회 중... (${endpoint})`);
       
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -35,7 +84,7 @@ async function getKaiaBalance(address) {
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
-          method: 'kaia_getBalance', // 카이아 메인넷은 kaia_ 메서드 사용
+          method: 'kaia_getBalance',
           params: [address, 'latest'],
           id: 1
         })
@@ -44,10 +93,9 @@ async function getKaiaBalance(address) {
       const data = await response.json();
       
       if (data.result) {
-        // 16진수 결과를 10진수로 변환하고 Wei에서 KAIA로 변환
         const balanceInWei = BigInt(data.result);
         const balanceInKaia = Number(balanceInWei) / Math.pow(10, 18);
-        console.log(`✅ 잔액 조회 성공: ${balanceInKaia} KAIA`);
+        console.log(`✅ KAIA 잔액: ${balanceInKaia}`);
         return balanceInKaia;
       } else if (data.error) {
         console.log(`⚠️ ${endpoint}에서 오류: ${data.error.message}`);
@@ -60,7 +108,7 @@ async function getKaiaBalance(address) {
             },
             body: JSON.stringify({
               jsonrpc: '2.0',
-              method: 'klay_getBalance', // 호환성을 위해 klay_ 메서드도 시도
+              method: 'klay_getBalance',
               params: [address, 'latest'],
               id: 1
             })
@@ -70,7 +118,7 @@ async function getKaiaBalance(address) {
           if (retryData.result) {
             const balanceInWei = BigInt(retryData.result);
             const balanceInKaia = Number(balanceInWei) / Math.pow(10, 18);
-            console.log(`✅ 잔액 조회 성공 (klay_ 메서드): ${balanceInKaia} KAIA`);
+            console.log(`✅ KAIA 잔액 (klay_ 메서드): ${balanceInKaia}`);
             return balanceInKaia;
           }
         }
@@ -84,18 +132,131 @@ async function getKaiaBalance(address) {
   return 0;
 }
 
-// 토큰 가격 조회
-async function getTokenPrice(coingeckoId) {
+// ERC-20 토큰 잔액 조회
+async function getTokenBalance(walletAddress, tokenAddress, decimals = 18) {
+  for (const endpoint of KAIA_RPC_ENDPOINTS) {
+    try {
+      // ERC-20 balanceOf 함수 호출 데이터 생성
+      const functionSelector = '0x70a08231'; // balanceOf(address)
+      const paddedAddress = walletAddress.slice(2).padStart(64, '0');
+      const callData = functionSelector + paddedAddress;
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'kaia_call',
+          params: [{
+            to: tokenAddress,
+            data: callData
+          }, 'latest'],
+          id: 1
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.result && data.result !== '0x') {
+        const balanceInWei = BigInt(data.result);
+        const balance = Number(balanceInWei) / Math.pow(10, decimals);
+        return balance;
+      } else {
+        // kaia_call 실패시 klay_call로 재시도
+        const retryResponse = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'klay_call',
+            params: [{
+              to: tokenAddress,
+              data: callData
+            }, 'latest'],
+            id: 1
+          })
+        });
+        
+        const retryData = await retryResponse.json();
+        if (retryData.result && retryData.result !== '0x') {
+          const balanceInWei = BigInt(retryData.result);
+          const balance = Number(balanceInWei) / Math.pow(10, decimals);
+          return balance;
+        }
+      }
+    } catch (error) {
+      console.log(`토큰 잔액 조회 실패 (${endpoint}):`, error.message);
+    }
+  }
+  
+  return 0;
+}
+
+// 지갑의 모든 토큰 잔액 조회
+async function getAllTokenBalances(walletAddress) {
+  const balances = [];
+  
+  console.log(`🔍 지갑의 모든 토큰 조회 중: ${walletAddress}`);
+  
+  // 각 토큰별로 잔액 확인
+  for (const token of POPULAR_KAIA_TOKENS) {
+    try {
+      let balance = 0;
+      
+      if (token.address === 'native') {
+        // 네이티브 KAIA 토큰
+        balance = await getKaiaBalance(walletAddress);
+      } else {
+        // ERC-20 토큰
+        balance = await getTokenBalance(walletAddress, token.address, token.decimals);
+      }
+      
+      // 잔액이 0보다 큰 경우만 추가
+      if (balance > 0) {
+        balances.push({
+          ...token,
+          balance: balance
+        });
+        console.log(`✅ ${token.symbol}: ${balance}`);
+      } else {
+        console.log(`⚪ ${token.symbol}: 0 (스킵)`);
+      }
+      
+      // API 호출 간격 조절 (과부하 방지)
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+    } catch (error) {
+      console.error(`❌ ${token.symbol} 조회 실패:`, error.message);
+    }
+  }
+  
+  console.log(`🎯 총 ${balances.length}개 토큰 발견`);
+  return balances;
+}
+
+// 토큰 가격 조회 (여러 토큰 동시 조회)
+async function getMultipleTokenPrices(coingeckoIds) {
   try {
-    const response = await fetch(`${COINGECKO_API}/simple/price?ids=${coingeckoId}&vs_currencies=usd,krw`);
+    const idsString = coingeckoIds.join(',');
+    const response = await fetch(`${COINGECKO_API}/simple/price?ids=${idsString}&vs_currencies=usd,krw`);
     const data = await response.json();
-    return {
-      usd: data[coingeckoId]?.usd || 0,
-      krw: data[coingeckoId]?.krw || 0
-    };
+    
+    const prices = {};
+    for (const id of coingeckoIds) {
+      prices[id] = {
+        usd: data[id]?.usd || 0,
+        krw: data[id]?.krw || 0
+      };
+    }
+    
+    return prices;
   } catch (error) {
     console.error('토큰 가격 조회 실패:', error);
-    return { usd: 0, krw: 0 };
+    return {};
   }
 }
 
