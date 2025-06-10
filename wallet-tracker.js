@@ -238,62 +238,142 @@ async function getTokenBalance(walletAddress, tokenAddress, decimals = 18) {
   return 0;
 }
 
-// 지갑의 거래 내역에서 토큰 발견하기
+// 지갑의 거래 내역에서 토큰 발견하기 (개선된 버전)
 async function discoverTokensFromTransactions(walletAddress) {
   try {
     console.log(`🔍 ${walletAddress}의 거래 내역에서 토큰 검색 중...`);
     
-    // Kaiascope API에서 지갑의 토큰 전송 기록 조회
+    // 여러 API 엔드포인트 시도
     const endpoints = [
-      `https://api.kaiascope.com/v2/accounts/${walletAddress}/token-transfers?page=1&size=100`,
-      `https://scope.klaytn.com/api/v2/accounts/${walletAddress}/token-transfers?page=1&size=100`
+      // Kaiascope 새로운 API
+      `https://api.kaiascope.com/v1/accounts/${walletAddress}/token-transfers?size=50`,
+      // Klaytnscope (기존)
+      `https://api.klaytnscope.com/v2/accounts/${walletAddress}/token-transfers?size=50`,
+      // 대체 엔드포인트
+      `https://th-api.klaytnapi.com/v2/transfer/account/${walletAddress}?kind=klay&kind=ft&size=50`
     ];
     
     for (const endpoint of endpoints) {
       try {
-        console.log(`API 호출: ${endpoint}`);
-        const response = await fetch(endpoint);
+        console.log(`🌐 API 호출: ${endpoint}`);
+        
+        const response = await fetch(endpoint, {
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'KaiaWalletTracker/1.0'
+          }
+        });
+        
+        console.log(`📡 응답 상태: ${response.status}`);
+        
+        if (response.status === 404) {
+          console.log(`⚠️ 엔드포인트를 찾을 수 없음: ${endpoint}`);
+          continue;
+        }
         
         if (!response.ok) {
-          console.log(`API 응답 오류: ${response.status}`);
+          console.log(`❌ API 응답 오류: ${response.status} ${response.statusText}`);
           continue;
         }
         
         const data = await response.json();
-        console.log(`API 응답 성공, 데이터:`, data);
+        console.log(`✅ API 응답 성공! 데이터 구조:`, Object.keys(data));
         
-        if (data.results && Array.isArray(data.results)) {
+        // 다양한 응답 구조 처리
+        let transfers = [];
+        if (data.results) transfers = data.results;
+        else if (data.data) transfers = data.data;
+        else if (data.items) transfers = data.items;
+        else if (Array.isArray(data)) transfers = data;
+        
+        console.log(`📊 전송 기록 ${transfers.length}개 발견`);
+        
+        if (transfers.length > 0) {
           const uniqueTokens = new Set();
           
-          data.results.forEach(transfer => {
-            if (transfer.contract_address && transfer.symbol) {
-              const tokenKey = transfer.contract_address.toLowerCase();
+          transfers.forEach((transfer, index) => {
+            if (index < 3) console.log(`🔍 전송 기록 샘플 ${index + 1}:`, transfer);
+            
+            // 다양한 필드명 처리
+            const contractAddress = transfer.contract_address || 
+                                   transfer.contractAddress || 
+                                   transfer.token_address ||
+                                   transfer.tokenAddress;
+            
+            const symbol = transfer.symbol || 
+                          transfer.token_symbol ||
+                          transfer.tokenSymbol;
+            
+            const name = transfer.name || 
+                        transfer.token_name ||
+                        transfer.tokenName ||
+                        symbol;
+            
+            const decimals = transfer.decimals || 
+                           transfer.token_decimals ||
+                           transfer.tokenDecimals ||
+                           18;
+            
+            if (contractAddress && symbol) {
+              const tokenKey = contractAddress.toLowerCase();
               if (!uniqueTokens.has(tokenKey)) {
                 uniqueTokens.add(tokenKey);
                 discoveredTokens.set(tokenKey, {
-                  symbol: transfer.symbol,
-                  name: transfer.name || transfer.symbol,
-                  address: transfer.contract_address,
-                  decimals: transfer.decimals || 18,
-                  coingecko_id: null // 나중에 CoinGecko에서 찾기
+                  symbol: symbol,
+                  name: name,
+                  address: contractAddress,
+                  decimals: parseInt(decimals),
+                  coingecko_id: null
                 });
+                console.log(`🎯 토큰 발견: ${symbol} (${contractAddress})`);
               }
             }
           });
           
-          console.log(`✅ ${uniqueTokens.size}개의 토큰 발견`);
+          console.log(`✅ 총 ${uniqueTokens.size}개의 고유 토큰 발견`);
           return Array.from(discoveredTokens.values());
         }
+        
       } catch (error) {
-        console.log(`API 호출 실패 (${endpoint}):`, error.message);
+        console.log(`❌ API 호출 실패 (${endpoint}):`, error.message);
       }
     }
     
-    console.log('⚠️ API에서 토큰 정보를 가져올 수 없음, 미리 정의된 토큰만 사용');
-    return [];
+    // API가 모두 실패한 경우 더 많은 미리 정의된 토큰 반환
+    console.log('⚠️ 모든 API 실패, 확장된 토큰 리스트 사용');
+    return [
+      {
+        symbol: 'oUSDT',
+        name: 'Orbit Bridge Klaytn USD Tether',
+        address: '0xcee8faf64bb97a73bb51e115aa89c17ffa8dd167',
+        decimals: 6,
+        coingecko_id: 'tether'
+      },
+      {
+        symbol: 'oUSDC', 
+        name: 'Orbit Bridge Klaytn USD Coin',
+        address: '0x754288077d0ff82af7a5317c7cb8c444d421d103',
+        decimals: 6,
+        coingecko_id: 'usd-coin'
+      },
+      {
+        symbol: 'WKLAY',
+        name: 'Wrapped KLAY',
+        address: '0x5819b6af194a78511c79c85ea68d2377a7e9335f',
+        decimals: 18,
+        coingecko_id: 'wrapped-klay'
+      },
+      {
+        symbol: 'KSP',
+        name: 'KLAYswap Protocol',
+        address: '0xc6a2ad8cc6d4a3e08b56e33d68b7f1c3618f40d3',
+        decimals: 18,
+        coingecko_id: 'klayswap-protocol'
+      }
+    ];
     
   } catch (error) {
-    console.error('토큰 발견 과정 오류:', error);
+    console.error('❌ 토큰 발견 과정 전체 오류:', error);
     return [];
   }
 }
@@ -369,8 +449,12 @@ async function getAllTokenBalances(walletAddress) {
   console.log(`🎯 총 ${allTokens.length}개 토큰 검사 예정 (미리정의: ${POPULAR_KAIA_TOKENS.length}개, 자동발견: ${discoveredTokensList.length}개)`);
   
   // 3. 각 토큰별로 잔액 확인
+  let checkedCount = 0;
   for (const token of allTokens) {
     try {
+      checkedCount++;
+      console.log(`🔍 [${checkedCount}/${allTokens.length}] ${token.symbol} 잔액 확인 중...`);
+      
       let balance = 0;
       
       if (token.address === 'native') {
@@ -387,13 +471,13 @@ async function getAllTokenBalances(walletAddress) {
           ...token,
           balance: balance
         });
-        console.log(`✅ ${token.symbol}: ${balance}`);
+        console.log(`✅ ${token.symbol}: ${balance} (보유 중!)`);
       } else {
-        console.log(`⚪ ${token.symbol}: 0 (스킵)`);
+        console.log(`⚪ ${token.symbol}: 0 (보유하지 않음)`);
       }
       
       // API 호출 간격 조절 (과부하 방지)
-      await new Promise(resolve => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 200));
       
     } catch (error) {
       console.error(`❌ ${token.symbol} 조회 실패:`, error.message);
