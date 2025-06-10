@@ -14,6 +14,15 @@ const KAIA_RPC_ENDPOINTS = [
 const COINGECKO_API = 'https://api.coingecko.com/api/v3';
 const KLAYTNSCOPE_API = 'https://scope.klaytn.com/api/v2';
 
+// 호환성을 위한 기존 TOKEN_INFO (필요시 사용)
+const TOKEN_INFO = {
+  KAIA: {
+    coingecko_id: 'kaia',
+    decimals: 18,
+    symbol: 'KAIA'
+  }
+};
+
 // 인기 카이아 체인 토큰들 (자동 검색용)
 const POPULAR_KAIA_TOKENS = [
   {
