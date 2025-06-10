@@ -12,7 +12,10 @@ const KAIA_RPC_ENDPOINTS = [
   'https://rpc.ankr.com/klaytn'
 ];
 const COINGECKO_API = 'https://api.coingecko.com/api/v3';
-const KLAYTNSCOPE_API = 'https://scope.klaytn.com/api/v2';
+const KAIASCOPE_API = 'https://api.kaiascope.com/v2';
+
+// 토큰 정보 캐시 (발견된 토큰들을 저장)
+let discoveredTokens = new Map();
 
 // 호환성을 위한 기존 TOKEN_INFO (필요시 사용)
 const TOKEN_INFO = {
@@ -23,12 +26,12 @@ const TOKEN_INFO = {
   }
 };
 
-// 인기 카이아 체인 토큰들 (자동 검색용)
+// 인기 카이아 체인 토큰들 (확장된 리스트)
 const POPULAR_KAIA_TOKENS = [
   {
     symbol: 'KAIA',
     name: 'Kaia',
-    address: 'native', // 네이티브 토큰
+    address: 'native',
     coingecko_id: 'kaia',
     decimals: 18
   },
@@ -65,6 +68,36 @@ const POPULAR_KAIA_TOKENS = [
     name: 'SOMESING',
     address: '0x48c811855d7c8f33baab9eaf3f04baaf5c7a1b7e',
     coingecko_id: 'somesing',
+    decimals: 18
+  },
+  // 추가 인기 토큰들
+  {
+    symbol: 'HANDY',
+    name: 'Handy',
+    address: '0x20d61eb55f8c93d78c1bdd5ba0e6dcc6c74b1d50',
+    coingecko_id: 'handy',
+    decimals: 18
+  },
+  {
+    symbol: 'BELT',
+    name: 'Belt Finance',
+    address: '0x1b6d6c6cbeec1b1e0b6c6bb9b02b1b1e9b0e6e8e',
+    coingecko_id: 'belt',
+    decimals: 18
+  },
+  {
+    symbol: 'BORA',
+    name: 'BORA',
+    address: '0x02cbe46fb8a1f579254a9b485788f2d86cad51aa',
+    coingecko_id: 'bora',
+    decimals: 18
+  },
+  // DeFi 토큰들
+  {
+    symbol: 'ISR',
+    name: 'Iskra Token',
+    address: '0x34d21b1e550d73cee41151c77f3c73359527a396',
+    coingecko_id: 'iskra-token',
     decimals: 18
   }
 ];
@@ -205,14 +238,138 @@ async function getTokenBalance(walletAddress, tokenAddress, decimals = 18) {
   return 0;
 }
 
-// 지갑의 모든 토큰 잔액 조회
+// 지갑의 거래 내역에서 토큰 발견하기
+async function discoverTokensFromTransactions(walletAddress) {
+  try {
+    console.log(`🔍 ${walletAddress}의 거래 내역에서 토큰 검색 중...`);
+    
+    // Kaiascope API에서 지갑의 토큰 전송 기록 조회
+    const endpoints = [
+      `https://api.kaiascope.com/v2/accounts/${walletAddress}/token-transfers?page=1&size=100`,
+      `https://scope.klaytn.com/api/v2/accounts/${walletAddress}/token-transfers?page=1&size=100`
+    ];
+    
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`API 호출: ${endpoint}`);
+        const response = await fetch(endpoint);
+        
+        if (!response.ok) {
+          console.log(`API 응답 오류: ${response.status}`);
+          continue;
+        }
+        
+        const data = await response.json();
+        console.log(`API 응답 성공, 데이터:`, data);
+        
+        if (data.results && Array.isArray(data.results)) {
+          const uniqueTokens = new Set();
+          
+          data.results.forEach(transfer => {
+            if (transfer.contract_address && transfer.symbol) {
+              const tokenKey = transfer.contract_address.toLowerCase();
+              if (!uniqueTokens.has(tokenKey)) {
+                uniqueTokens.add(tokenKey);
+                discoveredTokens.set(tokenKey, {
+                  symbol: transfer.symbol,
+                  name: transfer.name || transfer.symbol,
+                  address: transfer.contract_address,
+                  decimals: transfer.decimals || 18,
+                  coingecko_id: null // 나중에 CoinGecko에서 찾기
+                });
+              }
+            }
+          });
+          
+          console.log(`✅ ${uniqueTokens.size}개의 토큰 발견`);
+          return Array.from(discoveredTokens.values());
+        }
+      } catch (error) {
+        console.log(`API 호출 실패 (${endpoint}):`, error.message);
+      }
+    }
+    
+    console.log('⚠️ API에서 토큰 정보를 가져올 수 없음, 미리 정의된 토큰만 사용');
+    return [];
+    
+  } catch (error) {
+    console.error('토큰 발견 과정 오류:', error);
+    return [];
+  }
+}
+
+// CoinGecko에서 토큰 ID 찾기
+async function findCoinGeckoId(tokenSymbol, tokenAddress) {
+  try {
+    // 1. 심볼로 먼저 검색
+    const symbolResponse = await fetch(`${COINGECKO_API}/search?query=${tokenSymbol}`);
+    const symbolData = await symbolResponse.json();
+    
+    if (symbolData.coins && symbolData.coins.length > 0) {
+      // 카이아 체인에 있는 토큰 찾기
+      const kaiaToken = symbolData.coins.find(coin => 
+        coin.symbol.toLowerCase() === tokenSymbol.toLowerCase()
+      );
+      
+      if (kaiaToken) {
+        return kaiaToken.id;
+      }
+    }
+    
+    // 2. 미리 정의된 토큰에서 찾기
+    const predefinedToken = POPULAR_KAIA_TOKENS.find(token => 
+      token.symbol.toLowerCase() === tokenSymbol.toLowerCase() ||
+      token.address.toLowerCase() === tokenAddress.toLowerCase()
+    );
+    
+    if (predefinedToken) {
+      return predefinedToken.coingecko_id;
+    }
+    
+    // 3. 기본값 반환
+    return tokenSymbol.toLowerCase();
+    
+  } catch (error) {
+    console.log(`CoinGecko ID 찾기 실패 (${tokenSymbol}):`, error.message);
+    return tokenSymbol.toLowerCase();
+  }
+}
+// 지갑의 모든 토큰 잔액 조회 (자동 발견 + 미리 정의된 토큰)
 async function getAllTokenBalances(walletAddress) {
   const balances = [];
   
   console.log(`🔍 지갑의 모든 토큰 조회 중: ${walletAddress}`);
   
-  // 각 토큰별로 잔액 확인
-  for (const token of POPULAR_KAIA_TOKENS) {
+  // 1. 거래 내역에서 토큰 자동 발견
+  console.log('📊 거래 내역 분석으로 토큰 자동 검색...');
+  const discoveredTokensList = await discoverTokensFromTransactions(walletAddress);
+  
+  // 2. 미리 정의된 토큰과 발견된 토큰 합치기
+  const allTokensMap = new Map();
+  
+  // 미리 정의된 토큰 추가
+  POPULAR_KAIA_TOKENS.forEach(token => {
+    const key = token.address === 'native' ? 'native' : token.address.toLowerCase();
+    allTokensMap.set(key, token);
+  });
+  
+  // 발견된 토큰 추가 (중복 제거)
+  for (const discoveredToken of discoveredTokensList) {
+    const key = discoveredToken.address.toLowerCase();
+    if (!allTokensMap.has(key)) {
+      // CoinGecko ID 찾기
+      if (!discoveredToken.coingecko_id) {
+        discoveredToken.coingecko_id = await findCoinGeckoId(discoveredToken.symbol, discoveredToken.address);
+      }
+      allTokensMap.set(key, discoveredToken);
+    }
+  }
+  
+  const allTokens = Array.from(allTokensMap.values());
+  console.log(`🎯 총 ${allTokens.length}개 토큰 검사 예정 (미리정의: ${POPULAR_KAIA_TOKENS.length}개, 자동발견: ${discoveredTokensList.length}개)`);
+  
+  // 3. 각 토큰별로 잔액 확인
+  for (const token of allTokens) {
     try {
       let balance = 0;
       
@@ -236,7 +393,7 @@ async function getAllTokenBalances(walletAddress) {
       }
       
       // API 호출 간격 조절 (과부하 방지)
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 150));
       
     } catch (error) {
       console.error(`❌ ${token.symbol} 조회 실패:`, error.message);
