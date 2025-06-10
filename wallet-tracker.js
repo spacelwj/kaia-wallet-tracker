@@ -5,11 +5,11 @@ const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID;
 const KAIA_WALLET_ADDRESS = process.env.KAIA_WALLET_ADDRESS;
 
-// API 엔드포인트
+// API 엔드포인트 (카이아 메인넷)
 const KAIA_RPC_ENDPOINTS = [
+  'https://public-en-node.kaia.io',
   'https://public-en-cypress.klaytn.net',
-  'https://rpc.ankr.com/klaytn',
-  'https://klaytn-mainnet.gateway.tatum.io'
+  'https://rpc.ankr.com/klaytn'
 ];
 const COINGECKO_API = 'https://api.coingecko.com/api/v3';
 
@@ -22,11 +22,11 @@ const TOKEN_INFO = {
   }
 };
 
-// 카이아 체인 잔액 조회
+// 카이아 체인 잔액 조회 (최신 RPC 엔드포인트 사용)
 async function getKaiaBalance(address) {
   for (const endpoint of KAIA_RPC_ENDPOINTS) {
     try {
-      console.log(`카이아 잔액 조회 중... (${endpoint})`);
+      console.log(`💰 카이아 잔액 조회 중... (${endpoint})`);
       
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -35,7 +35,7 @@ async function getKaiaBalance(address) {
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
-          method: 'klay_getBalance',
+          method: 'kaia_getBalance', // 카이아 메인넷은 kaia_ 메서드 사용
           params: [address, 'latest'],
           id: 1
         })
@@ -47,15 +47,40 @@ async function getKaiaBalance(address) {
         // 16진수 결과를 10진수로 변환하고 Wei에서 KAIA로 변환
         const balanceInWei = BigInt(data.result);
         const balanceInKaia = Number(balanceInWei) / Math.pow(10, 18);
-        console.log(`잔액 조회 성공: ${balanceInKaia} KAIA`);
+        console.log(`✅ 잔액 조회 성공: ${balanceInKaia} KAIA`);
         return balanceInKaia;
+      } else if (data.error) {
+        console.log(`⚠️ ${endpoint}에서 오류: ${data.error.message}`);
+        // kaia_ 메서드가 실패하면 klay_ 메서드로 재시도
+        if (data.error.message.includes('kaia_getBalance')) {
+          const retryResponse = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'klay_getBalance', // 호환성을 위해 klay_ 메서드도 시도
+              params: [address, 'latest'],
+              id: 1
+            })
+          });
+          
+          const retryData = await retryResponse.json();
+          if (retryData.result) {
+            const balanceInWei = BigInt(retryData.result);
+            const balanceInKaia = Number(balanceInWei) / Math.pow(10, 18);
+            console.log(`✅ 잔액 조회 성공 (klay_ 메서드): ${balanceInKaia} KAIA`);
+            return balanceInKaia;
+          }
+        }
       }
     } catch (error) {
-      console.log(`엔드포인트 ${endpoint} 실패:`, error.message);
+      console.log(`❌ 엔드포인트 ${endpoint} 실패:`, error.message);
     }
   }
   
-  console.error('모든 카이아 RPC 엔드포인트 실패');
+  console.error('❌ 모든 카이아 RPC 엔드포인트 실패');
   return 0;
 }
 
