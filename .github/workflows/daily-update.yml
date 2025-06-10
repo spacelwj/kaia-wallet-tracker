@@ -18,10 +18,9 @@ jobs:
       uses: actions/setup-node@v3
       with:
         node-version: '18'
-        cache: 'npm'
     
     - name: 의존성 설치
-      run: npm install
+      run: npm install --no-package-lock
     
     - name: 카이아 지갑 잔액 업데이트
       run: npm start
