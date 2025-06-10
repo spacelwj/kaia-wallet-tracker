@@ -1,0 +1,23 @@
+{
+  "name": "kaia-wallet-tracker",
+  "version": "1.0.0",
+  "description": "카이아 지갑 잔액을 자동으로 노션에 기록하는 도구",
+  "main": "wallet-tracker.js",
+  "scripts": {
+    "start": "node wallet-tracker.js",
+    "test": "node wallet-tracker.js"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  },
+  "keywords": [
+    "crypto",
+    "wallet",
+    "notion",
+    "tracker",
+    "kaia",
+    "klaytn"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
